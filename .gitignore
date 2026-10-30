@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+# data, benchmark volumes and checkpoints stay local (IXI licence; size)
+*.nii
+*.nii.gz
+*.npy
+*.npz
+*.pt
+*.tar
+work/
+ixi/

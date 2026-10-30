@@ -1,0 +1,35 @@
+Synthetic test suite - run 30 October 2026
+Environment: Python 3.12, torch 2.11.0+cu128, RTX 5080 Laptop GPU
+Command: python -m tests.test_synthetic
+
+
+Synthetic pipeline tests  (volume (48, 48, 48))
+------------------------------------------------------------
+  PASS  forward -> (1, 2)
+  PASS  LRP -> shape (48, 48, 48), class 1, max 1.000, nonzero 51.7%
+  PASS  LRP class sensitivity -> rho(c0,c1) = 0.0438
+  PASS  Grad-CAM -> shape (48, 48, 48), class 1
+  PASS  IG after Grad-CAM -> shape (48, 48, 48), max |IG| 1.000
+  PASS  blur baseline -> std 1.029 -> 0.151
+  PASS  faithfulness -> LRP Faithfulness(ins=0.5443, del=0.5092, score=+0.0350)
+         random baseline -> Faithfulness(ins=0.5229, del=0.5300, score=-0.0072)
+  PASS  metric ordering -> oracle +0.0195 vs random +0.0007
+  PASS  cascading randomization ->
+         fc       rho = -0.3223
+         layer4   rho = -0.0170
+         layer3   rho = -0.0202
+         layer2   rho = +0.0224
+         layer1   rho = +0.0240
+         stem     rho = +0.0129
+  PASS  BN fold -> max |diff| 1.04e-06, BN left 0
+  PASS  lrp_layers composition -> max |diff| folded 1.04e-06, unfolded 0.00e+00
+  PASS  LRP conservation (bias-free) -> rel err c0 1.34e-05, c1 3.02e-06
+  PASS  atrophy -> target 25%, achieved 22.9%, min detJ 0.885, GT mass within 2 sigma 92.8%, beyond 3 sigma 0 vox
+  PASS  controls resampled -> mean |change| 0.0523, identity warp exact True
+  PASS  shortcut -> 3693 GT voxels, 3693 changed, 0 changed outside GT
+  PASS  assignment -> site imbalance 0.5, age gap 0.28y, shortcut 136/151 pos, 15/149 neg
+  PASS  GT metric ordering -> AUPRC oracle 1.000 vs random 0.245 (chance 0.243)
+  PASS  IXI filename parsing
+------------------------------------------------------------
+18/18 passed
+

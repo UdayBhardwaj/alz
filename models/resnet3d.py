@@ -20,7 +20,8 @@ from typing import List, Optional, Type
 import torch
 import torch.nn as nn
 
-__all__ = ["ResNet3D", "resnet3d_10", "resnet3d_18", "BasicBlock3D"]
+__all__ = ["ResNet3D", "resnet3d_10", "resnet3d_18", "BasicBlock3D",
+           "fold_batchnorm"]
 
 
 def conv3x3x3(in_ch: int, out_ch: int, stride: int = 1) -> nn.Conv3d:
@@ -133,21 +134,88 @@ class ResNet3D(nn.Module):
 
     # -- LRP support -------------------------------------------------------
 
-    def lrp_layers(self) -> List[nn.Module]:
+    def lrp_layers(self, fold_bn: bool = True) -> List[nn.Module]:
         """Ordered decomposition of forward() for relevance propagation.
 
         Stem convolution is listed separately so the propagator can apply the
         z^B bounded-domain rule to it. Residual blocks appear whole.
+
+        With ``fold_bn`` (the default) the layers come from a BN-folded copy
+        made at call time, so every conv carries its BatchNorm as weight and
+        bias and the BN slot in the stem becomes an Identity (passthrough).
+        Folding at call time rather than caching means a model that is
+        trained or randomised afterwards is never explained with stale
+        weights; the cascading-randomisation check relies on that.
         """
-        layers: List[nn.Module] = list(self.stem.children())
-        for stage in (self.layer1, self.layer2, self.layer3, self.layer4):
+        src = fold_batchnorm(self) if fold_bn else self
+        layers: List[nn.Module] = list(src.stem.children())
+        for stage in (src.layer1, src.layer2, src.layer3, src.layer4):
             layers.extend(stage.children())
-        layers += [self.avgpool, self.flatten, self.fc]
+        layers += [src.avgpool, src.flatten, src.fc]
         return layers
 
     def target_layer(self) -> nn.Module:
         """Feature layer Grad-CAM hooks into."""
         return self.layer4
+
+
+def _fold_conv_bn(conv: nn.Conv3d, bn: nn.BatchNorm3d) -> nn.Conv3d:
+    """Conv followed by eval-mode BN, as a single conv with bias.
+
+        BN(conv(x)) = gamma * (W*x + b - mu) / sqrt(var + eps) + beta
+                    = (s * W) * x + (beta + s * (b - mu)),   s = gamma / sqrt(var + eps)
+    """
+    s = bn.weight / torch.sqrt(bn.running_var + bn.eps)
+    fused = nn.Conv3d(conv.in_channels, conv.out_channels, conv.kernel_size,
+                      stride=conv.stride, padding=conv.padding,
+                      dilation=conv.dilation, groups=conv.groups, bias=True)
+    fused = fused.to(device=conv.weight.device, dtype=conv.weight.dtype)
+    b = conv.bias if conv.bias is not None else torch.zeros_like(bn.running_mean)
+    with torch.no_grad():
+        fused.weight.copy_(conv.weight * s.view(-1, *([1] * (conv.weight.ndim - 1))))
+        fused.bias.copy_(bn.bias + s * (b - bn.running_mean))
+    return fused
+
+
+def fold_batchnorm(model: ResNet3D) -> ResNet3D:
+    """LRP-ready copy of ``model`` with every BatchNorm absorbed into the
+    convolution before it (Montavon et al. 2019).
+
+    Propagating relevance through BN as a separate layer treats its
+    mean-shift as an input-dependent contribution and distorts the map; after
+    folding, the shift lives in a bias, which LRP handles as an ordinary
+    relevance sink. The original model is not modified.
+
+    Only valid in eval mode: the fold uses running statistics, so a copy made
+    from a model in train mode would not reproduce the forward pass the
+    model actually computes there. The copy is always returned in eval mode.
+    """
+    import copy
+
+    folded = copy.deepcopy(model).eval()
+
+    stem = list(folded.stem.children())
+    folded.stem = nn.Sequential(_fold_conv_bn(stem[0], stem[1]),
+                                nn.Identity(), *stem[2:])
+
+    for stage in (folded.layer1, folded.layer2, folded.layer3, folded.layer4):
+        for block in stage:
+            block.conv1 = _fold_conv_bn(block.conv1, block.bn1)
+            block.bn1 = nn.Identity()
+            block.conv2 = _fold_conv_bn(block.conv2, block.bn2)
+            block.bn2 = nn.Identity()
+            if block.downsample is not None:
+                conv, bn = block.downsample[0], block.downsample[1]
+                block.downsample = nn.Sequential(_fold_conv_bn(conv, bn))
+
+    leftover = [m for m in folded.modules()
+                if isinstance(m, nn.modules.batchnorm._BatchNorm)]
+    if leftover:
+        raise RuntimeError(
+            f"fold_batchnorm left {len(leftover)} BatchNorm layer(s) unfolded; "
+            "the block layout changed and this function needs updating"
+        )
+    return folded.eval()
 
 
 def resnet3d_10(**kw) -> ResNet3D:

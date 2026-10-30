@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 __all__ = ["AD_REGIONS", "RegionRelevance", "region_relevance",
-           "plausibility_score", "load_atlas"]
+           "plausibility_score", "load_atlas", "ground_truth_scores"]
 
 
 # Region names as they appear in the Harvard-Oxford subcortical and
@@ -173,3 +173,56 @@ def plausibility_score(regions: List[RegionRelevance],
                                   for n in names if n in by_name))
     scores["ad_total"] = float(sum(scores.values()))
     return scores
+
+
+def ground_truth_scores(saliency: np.ndarray,
+                        gt: np.ndarray,
+                        brain_mask: Optional[np.ndarray] = None
+                        ) -> Dict[str, float]:
+    """Correctness of a map against a known signal location.
+
+    The third axis, next to plausibility and faithfulness, and the one only
+    the simulated benchmark can provide. ``gt`` is any non-negative map of
+    where the signal was planted (``atrophy_gt`` or ``shortcut_gt`` from
+    ``data/simulate.py``); its support defines the positive voxels.
+
+    Returns
+    -------
+    mass_fraction
+        Share of in-brain relevance inside the GT support.
+    enrichment
+        mass_fraction divided by the support's share of brain voxels; 1.0 is
+        what a map uniform over the brain scores.
+    auprc
+        Average precision of saliency as a voxel classifier of GT support.
+        Its chance level is the support fraction, reported as ``auprc_chance``.
+    precision_at_k
+        Fraction of the top-|GT| voxels that fall in the GT support.
+    """
+    try:
+        from sklearn.metrics import average_precision_score
+    except ImportError as exc:                       # pragma: no cover
+        raise ImportError("scikit-learn required") from exc
+
+    if saliency.shape != gt.shape:
+        raise ValueError(f"saliency {saliency.shape} and gt {gt.shape} differ")
+    inside = (np.ones(gt.shape, bool) if brain_mask is None
+              else brain_mask.astype(bool))
+    sal = np.maximum(saliency, 0.0).astype(np.float64)[inside]
+    pos = (gt > 0)[inside]
+
+    n_pos = int(pos.sum())
+    if n_pos == 0:
+        raise ValueError("ground-truth support is empty inside the brain mask")
+    prior = n_pos / pos.size
+
+    total = sal.sum()
+    frac = float(sal[pos].sum() / total) if total > 1e-12 else 0.0
+    top = np.argpartition(-sal, n_pos - 1)[:n_pos]
+    return {
+        "mass_fraction": frac,
+        "enrichment": frac / prior,
+        "auprc": float(average_precision_score(pos, sal)),
+        "auprc_chance": float(prior),
+        "precision_at_k": float(pos[top].mean()),
+    }

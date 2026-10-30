@@ -110,7 +110,11 @@ class Rule:
         z = z + eps
         s = (r / z).detach()
         (z * s).sum().backward()
-        return (a * a.grad - l * l.grad - h * h.grad).detach()
+        # l.grad and h.grad already carry the minus signs from z above, so
+        # the three terms add. Subtracting them (as an earlier version did)
+        # flips the sign of the bound terms and breaks conservation; see
+        # test_lrp_conservation.
+        return (a * a.grad + l * l.grad + h * h.grad).detach()
 
     @staticmethod
     def passthrough(fn: Callable, a: torch.Tensor, r: torch.Tensor,
@@ -186,28 +190,15 @@ class LRP3D:
 
     # -- main call ---------------------------------------------------------
 
-    def __call__(self,
-                 x: torch.Tensor,
-                 class_idx: Optional[int] = None,
-                 return_signed: bool = False) -> Tuple[np.ndarray, int]:
-        """Attribute a single volume.
+    def _propagate(self,
+                   x: torch.Tensor,
+                   class_idx: Optional[int] = None
+                   ) -> Tuple[torch.Tensor, float, int]:
+        """Raw relevance at the input, before any clamping or normalisation.
 
-        Parameters
-        ----------
-        x
-            Input of shape (1, C, D, H, W) — or (1, C, H, W) in 2D.
-        class_idx
-            Target class. Defaults to the model's own prediction, which is the
-            right choice for faithfulness evaluation: we are explaining what
-            the model did, not what it should have done.
-        return_signed
-            If True, keep negative relevance instead of clamping at zero.
-
-        Returns
-        -------
-        (relevance, class_idx)
-            relevance: numpy array of shape (D, H, W), channel-summed and
-            max-normalised to [0, 1] (or [-1, 1] when ``return_signed``).
+        Returns (relevance of shape (1, C, ...), initialising logit, class).
+        Kept separate from ``__call__`` so diagnostics can see the
+        relevance on its original scale.
         """
         x = x.to(self.device)
 
@@ -237,7 +228,33 @@ class LRP3D:
             layer, a_in = self.layers[idx], acts[idx]
             r = self._apply(self._rule_for(idx, layer), layer, a_in, r)
 
-        R = r.squeeze(0).sum(0).detach().cpu().numpy()
+        return r.detach(), float(logits[0, class_idx].item()), class_idx
+
+    def __call__(self,
+                 x: torch.Tensor,
+                 class_idx: Optional[int] = None,
+                 return_signed: bool = False) -> Tuple[np.ndarray, int]:
+        """Attribute a single volume.
+
+        Parameters
+        ----------
+        x
+            Input of shape (1, C, D, H, W) — or (1, C, H, W) in 2D.
+        class_idx
+            Target class. Defaults to the model's own prediction, which is the
+            right choice for faithfulness evaluation: we are explaining what
+            the model did, not what it should have done.
+        return_signed
+            If True, keep negative relevance instead of clamping at zero.
+
+        Returns
+        -------
+        (relevance, class_idx)
+            relevance: numpy array of shape (D, H, W), channel-summed and
+            max-normalised to [0, 1] (or [-1, 1] when ``return_signed``).
+        """
+        r, _, class_idx = self._propagate(x, class_idx)
+        R = r.squeeze(0).sum(0).cpu().numpy()
         if not return_signed:
             R = np.maximum(R, 0.0)
         denom = np.abs(R).max()
@@ -249,17 +266,19 @@ class LRP3D:
 
     def conservation_error(self, x: torch.Tensor,
                            class_idx: Optional[int] = None) -> float:
-        """Relative deviation from the LRP conservation property.
+        """Relative deviation from the LRP conservation property,
+        ``|sum(R_input) - logit| / |logit|``.
 
         Sum of input relevance should approximately equal the initialising
         logit. Large values mean a rule in the chain is leaking relevance —
         worth reporting in the paper as an implementation-correctness check,
         since almost no applied XAI paper does.
+
+        Bias terms (including those produced by BatchNorm folding) absorb
+        relevance by design, so a trained model will not reach zero here; a
+        bias-free model should, up to the epsilon stabilisers.
         """
-        R, cls = self(x, class_idx, return_signed=True)
-        with torch.no_grad():
-            logit = self.model(x.to(self.device))[0, cls].item()
+        r, logit, _ = self._propagate(x, class_idx)
         if abs(logit) < 1e-12:
             return float("nan")
-        # R is max-normalised, so recover scale from the unnormalised pass.
-        return float(abs(R.sum()) / abs(logit))
+        return float(abs(r.sum().item() - logit) / abs(logit))

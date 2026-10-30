@@ -74,11 +74,14 @@ class IntegratedGradients3D:
                  baseline: Optional[torch.Tensor] = None
                  ) -> Tuple[np.ndarray, int]:
         device = next(self.model.parameters()).device
-        x = x.to(device)
+        # Detach: an explainer run earlier on the same tensor (Grad-CAM) can
+        # leave requires_grad set, which would make every path point below a
+        # non-leaf whose .grad is never populated.
+        x = x.to(device).detach()
         if baseline is None:
             from eval.faithfulness import blur_baseline
             baseline = blur_baseline(x, sigma=5.0)
-        baseline = baseline.to(device)
+        baseline = baseline.to(device).detach()
 
         with torch.no_grad():
             if class_idx is None:

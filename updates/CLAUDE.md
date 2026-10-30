@@ -15,9 +15,29 @@ This means the evaluation code is not supporting infrastructure — it *is* the
 result. A silent bug in `eval/faithfulness.py` invalidates the paper. Treat
 correctness there as higher priority than features anywhere else.
 
+## Data: ground-truth benchmark on IXI (ADNI and OASIS access were refused)
+
+Healthy IXI T1 scans (CC BY-SA 3.0, no application) with disease simulated on
+top, so the true signal location is known voxel by voxel:
+
+- `data/ixi_dataset.py` — download, filename parsing, demographics.
+- `data/simulate.py` — hippocampal atrophy warp + ground-truth |detJ − 1| map;
+  a shared sub-voxel jitter so controls are resampled exactly like positives;
+  planted shortcut bump; site/age-balanced labels; exact shortcut correlation.
+- `data/build_benchmark.py` — one condition (`atrophy` | `shortcut` | `both`)
+  → volumes, GT maps, `manifest.csv`. `--flip-shortcut` builds the reliance
+  test set.
+- `eval/anatomical.py:ground_truth_scores` — the correctness axis (mass in GT,
+  AUPRC vs GT, precision@|GT|), next to plausibility and faithfulness.
+
+Pipeline: `download_ixi` → `preprocess_cohort` → `build_benchmark` → train →
+`run_evaluation`. Before building a cohort, check `hippocampus_mask_on_grid()`
+visually on one preprocessed volume: a misplaced mask corrupts every GT number
+and nothing downstream would catch it.
+
 ## Working agreement
 
-- Run `python -m tests.test_synthetic` before and after every change. All 8 pass.
+- Run `python -m tests.test_synthetic` before and after every change. All 17 pass.
 - **Never weaken or delete a test to make it pass.** If a test fails, either the
   code is wrong or the test encodes a wrong assumption — say which, don't
   quietly adjust the threshold.
@@ -61,6 +81,12 @@ contribution to z. That is the canonical residual LRP split, and it is why this
 is real LRP rather than the Gradient×Input proxy the 2D paper had to use.
 
 If you change `lrp_layers()`, that property is what you must preserve.
+
+`lrp_layers()` returns layers from a BatchNorm-folded copy (`fold_batchnorm`),
+made fresh on each call so a later-trained or randomised model is never
+explained with stale weights. `test_lrp_conservation` checks that input
+relevance sums to the logit on a bias-free network (currently ~1e-5); it is
+what caught the z^B sign error, so keep it passing.
 
 `xai/baselines.py` retains Gradient×Input deliberately, as a labelled baseline —
 it lets the paper quantify what the 2D substitution cost.

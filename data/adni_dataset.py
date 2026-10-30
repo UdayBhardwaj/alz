@@ -26,7 +26,7 @@ import torch
 from torch.utils.data import Dataset
 
 __all__ = ["ScanRecord", "ADNIDataset", "subject_level_splits",
-           "check_split_integrity"]
+           "check_split_integrity", "read_manifest"]
 
 CLASS_MAP = {"CN": 0, "AD": 1, "MCI": 2}
 
@@ -139,6 +139,28 @@ def check_split_integrity(train: Sequence[ScanRecord],
             f"subject leakage: {len(overlap)} subject(s) in both train and test, "
             f"e.g. {sorted(overlap)[:5]}"
         )
+
+
+def read_manifest(path: str) -> List[ScanRecord]:
+    """ScanRecords from a manifest CSV with at least path, subject_id, label.
+
+    Reads the optional age / sex columns written by ``build_benchmark.py`` so
+    ``demographic_summary()`` works on benchmark cohorts too. Relative paths
+    are resolved against the manifest's folder, so a benchmark directory can
+    be moved as a whole.
+    """
+    import csv
+    base = os.path.dirname(os.path.abspath(path))
+    out: List[ScanRecord] = []
+    with open(path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            p = r["path"] if os.path.isabs(r["path"]) else os.path.join(base, r["path"])
+            age = r.get("age") or None
+            out.append(ScanRecord(path=p, subject_id=r["subject_id"],
+                                  label=int(r["label"]),
+                                  age=float(age) if age else None,
+                                  sex=r.get("sex") or None))
+    return out
 
 
 def demographic_summary(records: Sequence[ScanRecord]) -> Dict[str, object]:

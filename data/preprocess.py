@@ -39,7 +39,8 @@ class PreprocessConfig:
     do_n4: bool = True
     do_skullstrip: bool = True
     do_register: bool = True
-    skullstrip_method: str = "hdbet"        # "hdbet" | "synthstrip" | "ants"
+    skullstrip_method: str = "hdbet"        # "hdbet" | "synthstrip" | "ants" | "template"
+    mask_dilation: int = 2                  # voxels; "template" method only
     clip_percentiles: Tuple[float, float] = (0.5, 99.5)
 
 
@@ -92,6 +93,14 @@ def preprocess_volume(in_path: str,
     if cfg.do_n4:
         img = ants.n4_bias_field_correction(img)
 
+    if cfg.do_skullstrip and cfg.skullstrip_method == "template":
+        arr, mask_arr = _register_template_masked(img, cfg)
+        arr, mask_arr = _resample(arr, mask_arr, cfg.target_shape)
+        arr = normalise_intensity(arr, mask_arr, cfg.clip_percentiles)
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        np.save(out_path, arr.astype(np.float32))
+        return arr
+
     mask = None
     if cfg.do_skullstrip:
         img, mask = _skullstrip(img, cfg.skullstrip_method)
@@ -132,12 +141,62 @@ def _skullstrip(img, method: str):
     )
 
 
+def _head_template_2mm():
+    """ICBM152 2009 head T1 and brain mask, resampled onto the 2 mm MNI152
+    grid that the atlas and every benchmark volume use. Cached on disk."""
+    import tempfile
+    from nilearn import datasets, image
+
+    cache = Path(tempfile.gettempdir())
+    t_fn, m_fn = cache / "icbm2009_head_2mm.nii.gz", cache / "icbm2009_mask_2mm.nii.gz"
+    if not (t_fn.exists() and m_fn.exists()):
+        grid = datasets.load_mni152_template(resolution=2)
+        icbm = datasets.fetch_icbm152_2009()
+        image.resample_to_img(icbm["t1"], grid, interpolation="continuous").to_filename(t_fn)
+        image.resample_to_img(icbm["mask"], grid, interpolation="nearest").to_filename(m_fn)
+    return str(t_fn), str(m_fn)
+
+
+def _register_template_masked(img, cfg: PreprocessConfig):
+    """Registration-based brain extraction: head-to-head, then template mask.
+
+    Raw IXI scans include skull and neck. Registering them to a brain-only
+    template lets the affine squeeze the whole head into the brain outline,
+    and the brain mask then keeps skull (seen in the first atlas QC). So the
+    head is registered to the ICBM152 2009 *head* template, and the
+    template's brain mask, slightly dilated, cuts the brain out of the
+    registered head. Everything downstream lives in MNI space, so a
+    template-space mask is all we need. Requires only ANTs and nilearn.
+    """
+    import ants
+    from scipy.ndimage import binary_dilation
+
+    t_fn, m_fn = _head_template_2mm()
+    template = ants.image_read(t_fn)
+    mask_np = ants.image_read(m_fn).numpy() > 0.5
+    mask_np = binary_dilation(mask_np, iterations=cfg.mask_dilation)
+
+    reg = ants.registration(fixed=template, moving=img, type_of_transform="Affine")
+    arr = reg["warpedmovout"].numpy()
+    return arr * mask_np, mask_np
+
+
 def _load_template(path: Optional[str]):
     import ants
     if path:
         return ants.image_read(path)
+    import tempfile
     from nilearn import datasets
-    return ants.image_read(datasets.load_mni152_template().get_filename())
+    # Pinned to 2 mm: hippocampus_mask_on_grid() and the MNI brain mask must
+    # use the same grid. Newer nilearn returns an in-memory image with no
+    # filename, so write it out for ANTs.
+    tmpl = datasets.load_mni152_template(resolution=2)
+    fn = tmpl.get_filename()
+    if not fn:
+        fn = os.path.join(tempfile.gettempdir(), "mni152_2mm_template.nii.gz")
+        if not os.path.exists(fn):
+            tmpl.to_filename(fn)
+    return ants.image_read(fn)
 
 
 def _resample(arr: np.ndarray, mask: Optional[np.ndarray],
