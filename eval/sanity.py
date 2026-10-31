@@ -75,7 +75,7 @@ def _randomize_(module: nn.Module, generator: torch.Generator) -> None:
     for m in module.modules():
         if isinstance(m, (nn.Conv3d, nn.Conv2d, nn.Linear)):
             nn.init.kaiming_normal_(m.weight, mode="fan_out",
-                                    nonlinearity="relu")
+                                    nonlinearity="relu", generator=generator)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
         elif isinstance(m, (nn.BatchNorm3d, nn.BatchNorm2d)):
@@ -118,7 +118,8 @@ def cascading_randomization(model: nn.Module,
     if stage_names is None:
         stage_names = ["fc", "layer4", "layer3", "layer2", "layer1", "stem"]
 
-    generator = torch.Generator().manual_seed(seed)
+    device = next(model.parameters()).device
+    generator = torch.Generator(device=device).manual_seed(seed)
 
     base_map, cls = explainer_factory(model)(x, class_idx)
     results: Dict[str, float] = {}

@@ -63,6 +63,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--reliance", nargs="+", default=["shortcut", "both_p90"],
+                    help="conditions with a flipped test set")
     args = ap.parse_args()
     root, out = Path(args.results), Path(args.out)
 
@@ -71,7 +73,7 @@ def main() -> None:
     numbers = {"location_lift_atrophy_model": {m: boot_ci(loc[loc.method == m].lift.dropna())
                                                for m in METHODS},
                "n_subjects_location": int(loc.subject_id.nunique()),
-               "reliance": {c: logit_shift(root, c) for c in ("shortcut", "both_p90")}}
+               "reliance": {c: logit_shift(root, c) for c in args.reliance}}
     (out / "extra_numbers.json").write_text(json.dumps(numbers, indent=2), encoding="utf-8")
     print(json.dumps(numbers, indent=2))
 

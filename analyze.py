@@ -32,7 +32,9 @@ from scipy.stats import spearmanr
 
 METHODS = ["LRP", "GradCAM", "GradCAM++", "IG", "GradInput", "Occlusion", "Random"]
 TITLES = {"null": "Resampling control (null)", "atrophy": "A: atrophy only",
-          "shortcut": "C: shortcut only", "both_p90": "B: atrophy + shortcut, p = 0.9"}
+          "shortcut": "C: shortcut only", "both_p90": "B: atrophy + shortcut, p = 0.9",
+          "both_p70": "B: atrophy + shortcut, p = 0.7", "both_p100": "B: atrophy + shortcut, p = 1.0",
+          "both_p90_amp10": "B: p = 0.9, bump amplitude 1.0"}
 
 
 def boot_ci(x: np.ndarray, n: int = 2000, seed: int = 0) -> List[float]:

@@ -35,10 +35,21 @@ Main findings:
 - Faithfulness stays high on a model that learned nothing.
 - Grad-CAM and Grad-CAM++ give 2.7–3.0× chance relevance to the shortcut's
   position even in a model that never saw a shortcut.
+- Shortcut sweep: with a faint bump the model keeps using atrophy even at
+  p = 1.0, and LRP, Integrated Gradients, Gradient × Input and Occlusion track
+  its small, growing reliance. With a 3× stronger bump the model switches to
+  the shortcut (70% of decisions flip) and every method follows it, while
+  hippocampal plausibility falls below chance.
+- Randomisation tests (100 subjects): Grad-CAM++ maps barely change when the
+  output layer is randomised (Spearman ρ = 0.95) and Gradient × Input only
+  partly decorrelates (~0.43); LRP, Integrated Gradients and Occlusion pass.
+- Occlusion window ablation: its atrophy correctness is stable across 8³,
+  16³ and 32³ windows, but its plausibility varies almost twofold.
 
 Full tables are in `results/5fold/` (`tables.md`, `key_numbers.json`,
-`extra_numbers.json`). The draft paper, report and slides are in
-`docs/phase-iii/`.
+`extra_numbers.json`, `sanity_numbers.json`, `ablation_numbers.json`) and
+`results/sweep/`. The paper in IEEE and Springer LNCS format is in
+`docs/paper/`; the draft article, report and slides are in `docs/phase-iii/`.
 
 ## Layout
 
@@ -52,6 +63,8 @@ train.py             subject-level cross-validated training
 run_evaluation.py    explain a test set and score every map
 analyze.py           tables, bootstrap CIs and the figure
 location_control.py  shortcut-location control and logit-level reliance
+run_sanity.py        cascading and data randomisation tests (Adebayo et al.)
+run_ablation.py      Occlusion window-size ablation
 run_pilot.py         build -> train -> eval -> analyze in one command
 preprocess_ixi.py    parallel, resumable preprocessing of all IXI scans
 qc_atlas.py          visual check that the hippocampus mask sits on the hippocampus
@@ -70,6 +83,8 @@ python qc_atlas.py --nifti ixi/T1/IXI002-Guys-0828-T1.nii.gz --out ixi/qc
 python run_pilot.py --npy ixi/npy --demographics ixi/IXI.csv \
     --region-mask ixi/qc/hippocampus_96.npy --work work \
     --folds 0 1 2 3 4 --eval-volumes 0 --tag full
+python run_sanity.py --work work --out work/analysis_full --per-fold 20
+python run_ablation.py --work work --out work/analysis_full --per-fold 20
 ```
 
 `qc_atlas.py` writes `hippocampus_96.npy` and an overlay image; check that the

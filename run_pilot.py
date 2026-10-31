@@ -8,6 +8,11 @@ same subjects in the same folds):
     atrophy    condition A
     shortcut   condition C, plus a flipped test set
     both_p90   condition B with p = 0.9, plus a flipped test set
+    both_p70, both_p100
+               condition B at other shortcut correlations (shortcut sweep)
+    both_p90_amp10
+               condition B, p = 0.9, with a bump of amplitude 1.0 instead of
+               0.3: a shortcut easy enough to compete with atrophy
 
     python run_pilot.py --npy ixi/npy --demographics ixi/IXI.csv \\
         --region-mask ixi/qc/hippocampus_96.npy --work work --folds 0
@@ -32,12 +37,15 @@ BUILDS = {
     "shortcut_flip": dict(condition="shortcut", flip_shortcut=True),
     "both_p90":      dict(condition="both", p_shortcut=0.9),
     "both_p90_flip": dict(condition="both", p_shortcut=0.9, flip_shortcut=True),
+    "both_p70":      dict(condition="both", p_shortcut=0.7),
+    "both_p70_flip": dict(condition="both", p_shortcut=0.7, flip_shortcut=True),
+    "both_p100":     dict(condition="both", p_shortcut=1.0),
+    "both_p100_flip": dict(condition="both", p_shortcut=1.0, flip_shortcut=True),
+    "both_p90_amp10":      dict(condition="both", p_shortcut=0.9, amplitude=1.0),
+    "both_p90_amp10_flip": dict(condition="both", p_shortcut=0.9, amplitude=1.0, flip_shortcut=True),
 }
-TRAIN = ["null", "atrophy", "shortcut", "both_p90"]
-EVAL = {  # evaluation set -> condition whose checkpoint explains it
-    "null": "null", "atrophy": "atrophy", "shortcut": "shortcut",
-    "shortcut_flip": "shortcut", "both_p90": "both_p90", "both_p90_flip": "both_p90",
-}
+TRAIN = ["null", "atrophy", "shortcut", "both_p90", "both_p70", "both_p100", "both_p90_amp10"]
+EVAL = {t: t.removesuffix("_flip") for t in BUILDS}   # evaluation set -> checkpoint's condition
 
 
 def _build(tag: str, npy: str, demo: str, region: str, work: str) -> str:
@@ -45,10 +53,13 @@ def _build(tag: str, npy: str, demo: str, region: str, work: str) -> str:
     from data.build_benchmark import build_condition
     from data.ixi_dataset import ixi_subjects
     out = Path(work) / "bench" / tag
-    if (out / "manifest.csv").exists():
+    if (out / "config.json").exists():     # written last, so a killed build is redone
         return f"{tag}: exists"
+    from data.simulate import ShortcutConfig
     subs = ixi_subjects(npy, demo, pattern="*.npy")
-    build_condition(subs, np.load(region).astype(bool), out_dir=str(out), seed=0, **BUILDS[tag])
+    kw = dict(BUILDS[tag])
+    scfg = ShortcutConfig(amplitude=kw.pop("amplitude")) if "amplitude" in kw else None
+    build_condition(subs, np.load(region).astype(bool), out_dir=str(out), seed=0, shortcut_cfg=scfg, **kw)
     return f"{tag}: built {len(subs)}"
 
 
@@ -78,8 +89,9 @@ def main() -> None:
 
     if "build" in args.stages:
         with ProcessPoolExecutor(args.build_procs) as ex:
-            for msg in ex.map(_build, BUILDS, [args.npy] * 6, [args.demographics] * 6,
-                              [args.region_mask] * 6, [str(work)] * 6):
+            n = len(BUILDS)
+            for msg in ex.map(_build, BUILDS, [args.npy] * n, [args.demographics] * n,
+                              [args.region_mask] * n, [str(work)] * n):
                 print(msg, flush=True)
 
     if "train" in args.stages:
@@ -107,7 +119,7 @@ def main() -> None:
     if "analyze" in args.stages:
         run([py, "analyze.py", "--results", str(results), "--runs", str(runs),
              "--out", str(work / f"analysis{sfx}"),
-             "--conditions", "null", "atrophy", "shortcut", "both_p90"])
+             "--conditions", *TRAIN])
 
 
 if __name__ == "__main__":
