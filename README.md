@@ -1,4 +1,4 @@
-﻿# Faithful or Plausible?
+﻿# Evaluating Explainable AI for Alzheimer's Disease Classification Using 3D MRI
 
 A ground-truth benchmark for explainable AI on 3D brain MRI. Alzheimer-like
 hippocampal atrophy is simulated on healthy T1 scans from the open IXI
@@ -50,6 +50,8 @@ Full tables are in `results/5fold/` (`tables.md`, `key_numbers.json`,
 `extra_numbers.json`, `sanity_numbers.json`, `ablation_numbers.json`) and
 `results/sweep/`. The paper in IEEE and Springer LNCS format is in
 `docs/paper/`; the draft article, report and slides are in `docs/phase-iii/`.
+The final project documents (proposal, synopsis, report, presentation,
+demonstration video and output figures) are in `docs/phase-iv/`.
 
 ## Layout
 
@@ -66,6 +68,8 @@ location_control.py  shortcut-location control and logit-level reliance
 run_sanity.py        cascading and data randomisation tests (Adebayo et al.)
 run_ablation.py      Occlusion window-size ablation
 run_pilot.py         build -> train -> eval -> analyze in one command
+demo.py              simulator demonstration on a phantom (no data needed)
+demo_live.py         live demo: trained models classify and explain real benchmark scans
 preprocess_ixi.py    parallel, resumable preprocessing of all IXI scans
 qc_atlas.py          visual check that the hippocampus mask sits on the hippocampus
 ```
@@ -91,6 +95,15 @@ python run_ablation.py --work work --out work/analysis_full --per-fold 20
 mask sits on the hippocampus before building any benchmark. Every stage skips
 work whose output exists, so an interrupted run can be restarted.
 Preprocessing is CPU-heavy; lower `--workers` if the machine runs hot.
+
+After training, `demo_live.py` loads the fold-1 models, classifies held-out
+scans, explains one with five methods, scores each map against the ground
+truth, repeats the shortcut reliance test and shows the maps:
+
+```bash
+python demo.py                                        # phantom, no data needed
+python demo_live.py --bench work/bench --runs work/runs_full
+```
 
 ## Data and licence
 
